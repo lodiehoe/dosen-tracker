@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0f1115" />
+  <title>Dosen-Tracker</title>
+  <style>
+    :root{
+      --bg:#0f1115;
+      --card:#181b21;
+      --card2:#20242c;
+      --text:#f5f7fa;
+      --muted:#9ca3af;
+      --line:#2b3039;
+      --accent:#4f8cff;
+      --danger:#ff5d68;
+      --ok:#42c785;
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif}
+    body{padding:calc(18px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom))}
+    .wrap{max-width:520px;margin:0 auto}
+    h1{font-size:28px;line-height:1.1;margin:4px 0 6px}
+    .sub{color:var(--muted);font-size:14px;margin-bottom:18px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+    .drink{font-size:21px;font-weight:750}
+    .total{font-size:12px;color:var(--muted);background:var(--card2);padding:7px 10px;border-radius:999px}
+    .section{padding:12px 0}
+    .section + .section{border-top:1px solid var(--line)}
+    .label{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+    .label strong{font-size:15px}
+    .count{font-size:30px;font-weight:800;min-width:48px;text-align:right}
+    .controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    button{
+      appearance:none;border:0;border-radius:16px;min-height:56px;
+      font-size:21px;font-weight:750;color:var(--text);background:var(--card2);
+      touch-action:manipulation;
+    }
+    button:active{transform:scale(.985);filter:brightness(1.12)}
+    .plus{background:var(--accent)}
+    .missing-plus{background:var(--danger)}
+    .footer{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .small{font-size:14px;min-height:48px}
+    .reset{background:#2a2022;color:#ffb3b8}
+    .backup{background:#1c2b24;color:#9ae6bc}
+    #status{font-size:12px;color:var(--muted);text-align:center;margin-top:12px;min-height:18px}
+    .hint{font-size:12px;line-height:1.45;color:var(--muted);margin-top:16px;padding:0 3px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Dosen-Tracker</h1>
+  <div class="sub">Einfach tippen. Alles wird automatisch auf diesem Gerät gespeichert.</div>
+
+  <div id="cards"></div>
+
+  <div class="footer">
+    <button class="small backup" onclick="exportData()">Backup</button>
+    <button class="small reset" onclick="resetAll()">Alles zurücksetzen</button>
+  </div>
+  <div id="status"></div>
+  <div class="hint">
+    „Getrunken“ zählt deine Dosen. „Fehlend / andere“ ist für Dosen, die aus dem Kühlschrank verschwunden sind, ohne dass du sie getrunken hast.
+  </div>
+</div>
+
+<script>
+const drinks = [
+  { id: "redbull", name: "Red Bull" },
+  { id: "mate", name: "Mate" },
+  { id: "lipton", name: "Lipton Icetea Sparkling Zero" },
+  { id: "almdudler", name: "Almdudler" }
+];
+
+const KEY = "dosenTracker_v1";
+let data = load();
+
+function blankData(){
+  const obj = {};
+  drinks.forEach(d => obj[d.id] = {drank:0, missing:0});
+  return obj;
+}
+
+function load(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    const parsed = raw ? JSON.parse(raw) : blankData();
+    drinks.forEach(d => {
+      if(!parsed[d.id]) parsed[d.id] = {drank:0, missing:0};
+      parsed[d.id].drank = Math.max(0, Number(parsed[d.id].drank)||0);
+      parsed[d.id].missing = Math.max(0, Number(parsed[d.id].missing)||0);
+    });
+    return parsed;
+  }catch(e){
+    return blankData();
+  }
+}
+
+function save(){
+  try{
+    localStorage.setItem(KEY, JSON.stringify(data));
+    const now = new Date();
+    document.getElementById("status").textContent =
+      "Gespeichert: " + now.toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"});
+  }catch(e){
+    document.getElementById("status").textContent = "Speichern im Browser nicht möglich.";
+  }
+}
+
+function change(id, type, delta){
+  data[id][type] = Math.max(0, data[id][type] + delta);
+  save();
+  render();
+}
+
+function render(){
+  const root = document.getElementById("cards");
+  root.innerHTML = drinks.map(d => {
+    const x = data[d.id];
+    const total = x.drank + x.missing;
+    return `
+      <section class="card">
+        <div class="title-row">
+          <div class="drink">${d.name}</div>
+          <div class="total">Gesamt raus: ${total}</div>
+        </div>
+
+        <div class="section">
+          <div class="label">
+            <strong>Von mir getrunken</strong>
+            <div class="count">${x.drank}</div>
+          </div>
+          <div class="controls">
+            <button aria-label="${d.name} getrunken minus eins" onclick="change('${d.id}','drank',-1)">−1</button>
+            <button class="plus" aria-label="${d.name} getrunken plus eins" onclick="change('${d.id}','drank',1)">+1</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="label">
+            <strong>Fehlend / andere</strong>
+            <div class="count">${x.missing}</div>
+          </div>
+          <div class="controls">
+            <button aria-label="${d.name} fehlend minus eins" onclick="change('${d.id}','missing',-1)">−1</button>
+            <button class="missing-plus" aria-label="${d.name} fehlend plus eins" onclick="change('${d.id}','missing',1)">+1</button>
+          </div>
+        </div>
+      </section>`;
+  }).join("");
+}
+
+function resetAll(){
+  if(confirm("Wirklich alle Zähler auf 0 setzen?")){
+    data = blankData();
+    save();
+    render();
+  }
+}
+
+function exportData(){
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    data
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "dosen-tracker-backup.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+render();
+</script>
+</body>
+</html>
