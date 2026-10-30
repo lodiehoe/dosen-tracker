@@ -172,8 +172,7 @@ function render(){
             <label for="purchased-${d.id}">Gekauft gesamt</label>
             <input id="purchased-${d.id}" aria-label="${d.name} gekauft gesamt" type="number" inputmode="numeric" min="0" max="1000000000" step="1" placeholder="Menge" value="${x.purchased ?? ''}" onchange="setPurchased('${d.id}',this)" />
           </div>
-          <div class="remaining ${remaining !== null && remaining < 0 ? 'warning' : ''}">${remaining === null ? 'Restbestand: Kaufmenge eintragen' : remaining < 0 ? `Restbestand: ${remaining} · Kaufmenge prüfen` : `Noch übrig: ${remaining}`}</div>
-          <small>Anfangskauf + Nachkäufe. Bestehende Zähler bleiben erhalten.</small>
+          <div class="remaining ${remaining !== null && remaining <= 0 ? 'warning' : ''}">${remaining === null ? 'Restbestand: Kaufmenge eintragen' : remaining < 0 ? `Restbestand: ${remaining} · Kaufmenge prüfen` : remaining === 0 ? 'Noch übrig: 0 · Nachkaufen?' : `Noch übrig: ${remaining}`}</div>
         </div>
 
         <div class="section">
