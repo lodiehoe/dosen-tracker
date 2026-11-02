@@ -35,7 +35,19 @@
     .stock input{width:100px;min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;font-size:18px;text-align:right;padding:8px}
     .remaining{margin-top:10px;font-size:16px;color:#9ae6bc}
     .warning{color:#ffb3b8}
-    .stock small{display:block;color:var(--muted);line-height:1.4;margin-top:8px}
+    .drink{overflow-wrap:anywhere;min-width:0}
+    .manage{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin:16px 0}
+    .manage summary{cursor:pointer;font-weight:700;min-height:30px}
+    .manage form{margin-top:16px}
+    .manage label{display:block;font-size:14px;margin-bottom:8px}
+    .manage input{width:100%;min-height:48px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--text);font:inherit;font-size:16px;padding:10px}
+    .manage-row{padding:12px 0;border-top:1px solid var(--line)}
+    .manage-row span{display:block;overflow-wrap:anywhere;margin-bottom:8px}
+    .manage-actions{display:flex;gap:8px}
+    .manage-actions button{flex:1;padding:8px}
+    .add-drink{width:100%;margin-top:8px}
+    .single-reset{width:100%;margin-top:12px}
+    .empty{color:var(--muted);line-height:1.5;padding:16px 0}
     .reset{grid-column:1 / -1}
     .section{padding:12px 0}
     .section + .section{border-top:1px solid var(--line)}
@@ -64,6 +76,15 @@
   <h1>Dosen-Tracker</h1>
   <div class="sub">Einfach tippen. Alles wird automatisch auf diesem Gerät gespeichert.</div>
 
+  <details class="manage" id="manage">
+    <summary>Getränke verwalten</summary>
+    <form onsubmit="addDrink(event)">
+      <label for="new-drink">Neues Getränk</label>
+      <input id="new-drink" name="drink" maxlength="80" placeholder="z. B. Apfelschorle" required />
+      <button class="small plus add-drink" type="submit">Getränk hinzufügen</button>
+    </form>
+    <div id="drink-list"></div>
+  </details>
   <div id="cards"></div>
 
   <div class="footer">
@@ -79,7 +100,7 @@
 </div>
 
 <script>
-const drinks = [
+const defaultDrinks = [
   { id: "redbull", name: "Red Bull" },
   { id: "mate", name: "Mate" },
   { id: "lipton", name: "Lipton Icetea Sparkling Zero" },
@@ -87,11 +108,13 @@ const drinks = [
 ];
 
 const KEY = "dosenTracker_v1";
-let data = load();
+let drinks = defaultDrinks.map(d => ({...d}));
+let data = blankData(drinks);
+load();
 
-function blankData(){
-  const obj = {};
-  drinks.forEach(d => obj[d.id] = {drank:0, missing:0, purchased:null});
+function blankData(list = drinks){
+  const obj = Object.create(null);
+  list.forEach(d => obj[d.id] = {drank:0, missing:0, purchased:null});
   return obj;
 }
 
@@ -99,12 +122,27 @@ function validCount(value){
   return Number.isSafeInteger(value) && value >= 0 && value <= 1000000000;
 }
 
-function normalizeData(source){
+function normalizeDrinks(list){
+  if(!Array.isArray(list) || list.length > 100) throw new Error("Ungültige Getränkeliste");
+  const seen = new Set();
+  return list.map(d => {
+    if(!d || typeof d.id !== "string" || !/^[a-z][a-z0-9_-]{0,79}$/.test(d.id) ||
+       ['constructor','prototype','__proto__'].includes(d.id) || seen.has(d.id) ||
+       typeof d.name !== "string" || !d.name.trim() || d.name.trim().length > 80) throw new Error("Ungültiges Getränk");
+    seen.add(d.id);
+    return {id:d.id, name:d.name.trim()};
+  });
+}
+
+function normalizeData(source, list, strict = false){
   if(!source || typeof source !== "object" || Array.isArray(source)) throw new Error("Ungültige Daten");
-  const result = blankData();
-  let found = false;
-  drinks.forEach(d => {
-    if(!Object.prototype.hasOwnProperty.call(source, d.id)) return;
+  const result = blankData(list);
+  let found = list.length === 0;
+  list.forEach(d => {
+    if(!Object.prototype.hasOwnProperty.call(source, d.id)){
+      if(strict) throw new Error("Fehlende Zähler");
+      return;
+    }
     found = true;
     const entry = source[d.id];
     if(!entry || typeof entry !== "object" || !validCount(entry.drank) || !validCount(entry.missing)) throw new Error("Ungültige Zähler");
@@ -116,24 +154,118 @@ function normalizeData(source){
   return result;
 }
 
+function normalizeState(payload, legacyStorage = false){
+  if(!payload || typeof payload !== "object") throw new Error("Ungültiges Backup");
+  if(payload.version === 3){
+    const list = normalizeDrinks(payload.drinks);
+    return {drinks:list, data:normalizeData(payload.data, list, true)};
+  }
+  if(!legacyStorage && payload.version !== undefined && payload.version !== 1 && payload.version !== 2) throw new Error("Unbekannte Version");
+  const list = defaultDrinks.map(d => ({...d}));
+  return {drinks:list, data:normalizeData(legacyStorage ? payload : payload.data, list)};
+}
+
 function load(){
   try{
     const raw = localStorage.getItem(KEY);
-    return raw ? normalizeData(JSON.parse(raw)) : blankData();
+    if(!raw) return;
+    const state = normalizeState(JSON.parse(raw), true);
+    drinks = state.drinks;
+    data = state.data;
   }catch(e){
-    return blankData();
+    // Leave the original stored data untouched if it cannot be read.
   }
+}
+
+function persist(list, values){
+  localStorage.setItem(KEY, JSON.stringify({version:3, drinks:list, data:values}));
 }
 
 function save(){
   try{
-    localStorage.setItem(KEY, JSON.stringify(data));
-    const now = new Date();
-    document.getElementById("status").textContent =
-      "Gespeichert: " + now.toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"});
+    persist(drinks, data);
+    document.getElementById("status").textContent = "Gespeichert: " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"});
   }catch(e){
     document.getElementById("status").textContent = "Speichern im Browser nicht möglich.";
   }
+}
+
+function applyState(list, values){
+  try{
+    persist(list, values);
+    drinks = list;
+    data = values;
+    render();
+    renderManager();
+    document.getElementById("status").textContent = "Änderung gespeichert.";
+    return true;
+  }catch(e){
+    document.getElementById("status").textContent = "Änderung konnte nicht gespeichert werden. Bisherige Werte bleiben erhalten.";
+    return false;
+  }
+}
+
+function escapeHtml(value){
+  return value.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderManager(){
+  document.getElementById("drink-list").innerHTML = drinks.map(d => `
+    <div class="manage-row">
+      <span>${escapeHtml(d.name)}</span>
+      <div class="manage-actions">
+        <button class="small" type="button" aria-label="${escapeHtml(d.name)} umbenennen" onclick="renameDrink('${d.id}')">Umbenennen</button>
+        <button class="small reset" type="button" aria-label="${escapeHtml(d.name)} entfernen" onclick="removeDrink('${d.id}')">Entfernen</button>
+      </div>
+    </div>`).join("");
+}
+
+function addDrink(event){
+  event.preventDefault();
+  const input = document.getElementById("new-drink");
+  const name = input.value.trim();
+  if(!name || name.length > 80) return;
+  if(drinks.length >= 100){
+    document.getElementById("status").textContent = "Maximal 100 Getränke möglich.";
+    return;
+  }
+  if(drinks.some(d => d.name.toLocaleLowerCase('de') === name.toLocaleLowerCase('de'))){
+    document.getElementById("status").textContent = "Dieses Getränk ist schon vorhanden.";
+    return;
+  }
+  const id = 'drink_' + crypto.randomUUID();
+  if(applyState([...drinks, {id,name}], {...data, [id]:{drank:0, missing:0, purchased:null}})) input.value = "";
+}
+
+function renameDrink(id){
+  const drink = drinks.find(d => d.id === id);
+  if(!drink) return;
+  const value = prompt("Neuer Name für das Getränk (max. 80 Zeichen):", drink.name);
+  if(value === null) return;
+  const name = value.trim();
+  if(!name || name.length > 80){
+    document.getElementById("status").textContent = "Bitte einen Namen mit 1 bis 80 Zeichen eingeben.";
+    return;
+  }
+  if(drinks.some(d => d.id !== id && d.name.toLocaleLowerCase('de') === name.toLocaleLowerCase('de'))){
+    document.getElementById("status").textContent = "Dieses Getränk ist schon vorhanden.";
+    return;
+  }
+  applyState(drinks.map(d => d.id === id ? {...d,name} : d), data);
+}
+
+function removeDrink(id){
+  const drink = drinks.find(d => d.id === id);
+  if(!drink || !confirm(`„${drink.name}“ samt Zählern und Kaufmenge entfernen? Mit einem vorher gespeicherten Backup kannst du es wiederherstellen.`)) return;
+  const next = {...data};
+  delete next[id];
+  applyState(drinks.filter(d => d.id !== id), next);
+}
+
+function resetDrink(id){
+  const drink = drinks.find(d => d.id === id);
+  if(!drink || !confirm(`Nur „${drink.name}“ zurücksetzen? Getrunken und fehlend werden auf 0 gesetzt; die Kaufmenge wird geleert. Andere Getränke bleiben unverändert.`)) return;
+  applyState(drinks, {...data, [id]:{drank:0, missing:0, purchased:null}});
 }
 
 function change(id, type, delta){
@@ -156,21 +288,21 @@ function setPurchased(id, input){
 
 function render(){
   const root = document.getElementById("cards");
-  root.innerHTML = drinks.map(d => {
+  root.innerHTML = drinks.length ? drinks.map(d => {
     const x = data[d.id];
     const total = x.drank + x.missing;
     const remaining = x.purchased === null ? null : x.purchased - total;
     return `
       <section class="card">
         <div class="title-row">
-          <div class="drink">${d.name}</div>
+          <div class="drink">${escapeHtml(d.name)}</div>
           <div class="total">Gesamt raus: ${total}</div>
         </div>
 
         <div class="stock">
           <div class="stock-row">
             <label for="purchased-${d.id}">Gekauft gesamt</label>
-            <input id="purchased-${d.id}" aria-label="${d.name} gekauft gesamt" type="number" inputmode="numeric" min="0" max="1000000000" step="1" placeholder="Menge" value="${x.purchased ?? ''}" onchange="setPurchased('${d.id}',this)" />
+            <input id="purchased-${d.id}" aria-label="${escapeHtml(d.name)} gekauft gesamt" type="number" inputmode="numeric" min="0" max="1000000000" step="1" placeholder="Menge" value="${x.purchased ?? ''}" onchange="setPurchased('${d.id}',this)" />
           </div>
           <div class="remaining ${remaining !== null && remaining <= 0 ? 'warning' : ''}">${remaining === null ? 'Restbestand: Kaufmenge eintragen' : remaining < 0 ? `Restbestand: ${remaining} · Kaufmenge prüfen` : remaining === 0 ? 'Noch übrig: 0 · Nachkaufen?' : `Noch übrig: ${remaining}`}</div>
         </div>
@@ -181,8 +313,8 @@ function render(){
             <div class="count">${x.drank}</div>
           </div>
           <div class="controls">
-            <button aria-label="${d.name} getrunken minus eins" onclick="change('${d.id}','drank',-1)">−1</button>
-            <button class="plus" aria-label="${d.name} getrunken plus eins" onclick="change('${d.id}','drank',1)">+1</button>
+            <button aria-label="${escapeHtml(d.name)} getrunken minus eins" onclick="change('${d.id}','drank',-1)">−1</button>
+            <button class="plus" aria-label="${escapeHtml(d.name)} getrunken plus eins" onclick="change('${d.id}','drank',1)">+1</button>
           </div>
         </div>
 
@@ -192,25 +324,25 @@ function render(){
             <div class="count">${x.missing}</div>
           </div>
           <div class="controls">
-            <button aria-label="${d.name} fehlend minus eins" onclick="change('${d.id}','missing',-1)">−1</button>
-            <button class="missing-plus" aria-label="${d.name} fehlend plus eins" onclick="change('${d.id}','missing',1)">+1</button>
+            <button aria-label="${escapeHtml(d.name)} fehlend minus eins" onclick="change('${d.id}','missing',-1)">−1</button>
+            <button class="missing-plus" aria-label="${escapeHtml(d.name)} fehlend plus eins" onclick="change('${d.id}','missing',1)">+1</button>
           </div>
         </div>
+        <button class="small reset single-reset" aria-label="${escapeHtml(d.name)} zurücksetzen" onclick="resetDrink('${d.id}')">Dieses Getränk zurücksetzen</button>
       </section>`;
-  }).join("");
+  }).join("") : '<p class="empty">Noch keine Getränke. Unter „Getränke verwalten“ kannst du eines hinzufügen.</p>';
 }
 
 function resetAll(){
   if(confirm("Wirklich alle Zähler und Kaufmengen zurücksetzen?")){
-    data = blankData();
-    save();
-    render();
+    applyState(drinks, blankData());
   }
 }
 
 function exportData(){
   const payload = {
-    version: 2,
+    version: 3,
+    drinks,
     exportedAt: new Date().toISOString(),
     data
   };
@@ -231,17 +363,13 @@ async function importData(input){
   try{
     if(file.size > 1000000) throw new Error("Datei zu groß");
     const payload = JSON.parse(await file.text());
-    if(payload.version !== undefined && payload.version !== 1 && payload.version !== 2) throw new Error("Unbekannte Version");
-    const restored = normalizeData(payload.data);
-    const summary = drinks.map(d => {
-      const x = restored[d.id];
+    const restored = normalizeState(payload);
+    const summary = restored.drinks.map(d => {
+      const x = restored.data[d.id];
       return `${d.name}: ${x.drank} getrunken, ${x.missing} fehlend, ${x.purchased ?? 'nicht erfasst'} gekauft`;
     }).join('\n');
-    if(!confirm("Backup laden? Deine aktuellen Zähler und Kaufmengen werden durch diese Werte ersetzt:\n\n" + summary)) return;
-    // Persist first so a failed write cannot replace the current in-memory counters.
-    localStorage.setItem(KEY, JSON.stringify(restored));
-    data = restored;
-    render();
+    if(!confirm("Backup laden? Die aktuelle Getränkeliste, Zähler und Kaufmengen werden ersetzt:\n\n" + (summary || "Leere Getränkeliste"))) return;
+    if(!applyState(restored.drinks, restored.data)) return;
     document.getElementById("status").textContent = "Backup geladen und auf diesem Gerät gespeichert.";
   }catch(e){
     document.getElementById("status").textContent = "Backup konnte nicht geladen werden. Bitte eine gültige Dosen-Tracker-JSON-Datei wählen und Browser-Speicherung erlauben. Deine bisherigen Werte wurden nicht geändert.";
@@ -251,6 +379,7 @@ async function importData(input){
 }
 
 render();
+renderManager();
 </script>
 </body>
 </html>
